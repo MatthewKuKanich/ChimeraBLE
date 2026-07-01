@@ -1,0 +1,18 @@
+# PlatformIO build output + fetched dependencies (regenerated on build)
+.pio/
+
+# Build artifacts / firmware images - published via GitHub Releases, not the tree
+*.bin
+*.elf
+*.map
+*.o
+*.a
+dist/
+
+# Generated OUI database (build with tools/make_oui_bin.py) + its raw Wireshark source
+/data/oui.bin
+manuf.json
+
+# macOS / editor cruft
+.DS_Store
+*.orig

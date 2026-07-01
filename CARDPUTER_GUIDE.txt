@@ -1,0 +1,214 @@
+CHIMERABLE - CARDPUTER QUICK GUIDE
+==================================
+
+A handheld, multi-headed BLE security tool. Scan for Bluetooth LE devices,
+inspect them, clone them, sniff HID, direction-find, and proxy traffic.
+Named for the chimera: one tool that speaks BLE as Host, Peripheral, and MITM (Both).
+
+SD CARD: insert a microSD card. ChimeraBLE keeps everything it writes in a single
+/ChimeraBLE folder on the card (clone profiles, Sentry rules, device dumps, and
+honeypot/MITM logs) - it won't litter the card's root. That folder is created
+automatically on first launch; you can also make /ChimeraBLE yourself beforehand.
+For MAC-vendor names, put oui.bin inside it (so /ChimeraBLE/oui.bin; optional -
+without it, vendor names are just disabled). The card is required when running
+ChimeraBLE sideloaded from the M5 launcher.
+
+
+CONTROLS
+--------
+The Cardputer has no real arrow keys - navigation uses the marked keys:
+
+  ;  (up arrow)      move selection up / scroll up
+  .  (down arrow)    move selection down / scroll down
+  ,  (left arrow)    back / go up a screen
+  /  (right arrow)   open / select / confirm
+  Enter              select / confirm (same as right)
+  Del / Backspace    back (or delete a char in Command mode)
+  '  (apostrophe)    open Command line (type a CLI command)
+  `  (top-left key)  ESC: opens the action menu on Main (see below); also
+                     cancels a hanging "Connecting..." popup
+
+Tip: most screens show key hints along the bottom.
+
+
+MAIN MENU
+---------
+Pick an item with up/down, open with right/Enter. The main menu has four
+entries: Scan, then two categories, then Settings. Left/Del backs up one level.
+
+1. Scan                Start a BLE scan. While "Scan" is highlighted you can
+                       TYPE a number (seconds) to set the scan duration, then
+                       press right/Enter to start. Found devices stream in
+                       live, sorted by signal strength (RSSI), and you land on
+                       the Devices list.
+
+2. Recon & Analysis    Passive inspection tools (the "Host" head):
+
+   - Devices           The list of devices from the last scan. Shows name (or
+                       a best-guess for unnamed devices) + RSSI (color-coded).
+                       Select one to open its actions:
+                         - Connect        connect, then dump on the GATT screen.
+                                          Pairs only if the device requests it
+                                          (toggle Settings -> Auto-pair to force
+                                          it). Press ESC to abort if the
+                                          "Connecting..." popup hangs.
+                         - Foxhunt/Track  signal-strength hunt for THIS device
+                         - MITM proxy     man-in-the-middle this device
+   - GATT              Services/characteristics of the connected (or last
+                       dumped) device, decoded where known. Scroll up/down.
+                       Right/Enter re-dumps; if a dump already exists it asks
+                       "Re-dump device? Enter=yes any=no" so you don't re-dump
+                       by accident.
+   - Live Stream       Live decode of notifications from a connected + dumped
+                       device, one per line: HID keyboards (keystrokes), Heart
+                       Rate ("HR 72 bpm", updates live), Battery, or any other
+                       notify characteristic (raw hex). Opening it first shows a
+                       PICKER - toggle which notifications you want with Enter,
+                       then choose "Start streaming". Connect + dump first.
+   - Saved Dumps       Browse device dumps saved to the microSD card. Select
+                       one to view it. Press 'x' to delete (asks to confirm).
+
+3. Adversarial         Active tools (the "Peripheral" + "MITM" heads):
+
+   - Clone             Save the current dump as a clone profile, then advertise
+                       as that device.
+                         - Save current dump...  opens the command line
+                                                 prefilled with "clone save " -
+                                                 type a name, Enter
+                         - Advertise loaded      broadcast as the loaded profile
+                                                 (reboots to spoof the target MAC)
+                         - Stop advertising      stop broadcasting
+                       Saved profiles list below the actions; select to load.
+                       The list auto-refreshes after a save.
+   - BLE Honeypot      Live view of what a HOST does when it connects to your
+                       clone (or MITM proxy): subscribes, reads, writes, and
+                       relayed traffic. Also logged to microSD in real time.
+                       Opens automatically when a host connects. Scroll up/down.
+   - MITM proxy        Jumps to a "MITM: pick target" device list. Selecting a
+                       device immediately connects + pairs + dumps it, then
+                       reboots into proxy mode (see MITM PROXY below).
+
+4. Sentry              Detection / alert mode. Keep a watchlist of devices to
+                       look for; when "watching" is on, the device scans
+                       continuously and ALERTS (sound + popup) on a match. See
+                       SENTRY below.
+
+5. Settings            Volume / brightness / scan time, plus state-dependent
+                       actions and Logs. See SETTINGS below.
+
+
+SETTINGS
+--------
+  Volume            cycle speaker volume (also used by Foxhunt audio)
+  Brightness        cycle screen brightness
+  Scan time         cycle default scan duration
+  Auto-pair         on/off. OFF (default) connects without forcing pairing, like
+                    nRF Connect - best for most devices (some sensors drop a
+                    central that pairs uninvited). Turn ON only if a device needs
+                    pairing to expose its data and won't ask for it itself.
+  Logs              open the scrollable activity log
+  Charging mode     dim screen to a battery-only readout + low-power state for
+                    charging (see CHARGING MODE). Press any key to exit.
+  Disconnect        (only if connected) drop the current link
+  Stop advertising  (only if advertising a clone) stop it
+  Stop MITM proxy   (only if a proxy is live) stop it
+  Clear all bonds   forget all saved pairings
+
+
+CHARGING MODE
+-------------
+The Cardputer only charges while it's powered on, so this mode lets you leave
+it charging with minimal waste and no screen burn-in. Settings -> Charging
+mode shows a big battery readout (level %, charging/​on-battery, voltage,
+current) on a near-black, heavily-dimmed screen, and while active it:
+  - dims the backlight to near-off (the biggest power draw)
+  - drops the CPU clock to 80 MHz
+  - stops scanning / foxhunt / Sentry watching and silences the speaker
+  - redraws slowly and gently drifts the text to avoid burn-in
+Press ANY key to exit - brightness and full speed are restored.
+
+
+SENTRY (detection / alert)
+--------------------------
+Watch for specific devices and get alerted when one shows up nearby.
+
+The Sentry screen lists three actions then your saved rules:
+  Start/Stop watching   toggle the detection mode on/off
+  Add from scan         pick a scanned device, then pick which of its
+                        attributes to track (MAC / OUI / Company ID /
+                        Service UUID / Name)
+  Add manually          pick a match type, then TYPE the value(s). Multiple
+                        values (space/comma separated) match if ANY matches -
+                        e.g. one "Smart Glasses" rule with company IDs
+                        01AB 058E 0D53 03C2.
+  <rules>               each shows [*] enabled / [ ] disabled. Right/Enter
+                        toggles a rule on/off; 'x' deletes it.
+
+Match types (all from the advertisement - no connection needed):
+  MAC        exact device address
+  OUI        vendor prefix (first 3 bytes; public addresses only)
+  Company    manufacturer SIG company ID (e.g. 0x01AB Meta)
+  Service    advertised service UUID (e.g. 0x1812 HID). NOTE: individual GATT
+             characteristics aren't advertised, so they can't be matched
+             passively - Service UUID is the advertised stand-in.
+  Name       case-insensitive substring of the local name
+
+When watching is ON the device scans continuously. On a match it plays an
+alert tone and opens a MATCH screen showing the rule, the reason, and the
+device, with three choices:
+  Connect    connect to it (then dump on the GATT screen)
+  Foxhunt    track its signal to home in on it
+  Dismiss    ignore this device for the rest of the session
+A matched device won't re-alert for ~2 minutes (Dismiss = ignore until you
+stop/restart watching). Rules persist on the SD card (or flash if no card).
+
+
+FOXHUNT / TRACK
+---------------
+Direction-finding: a big live RSSI readout for one device - walk around and
+watch the number rise as you get closer.
+  a    toggle Geiger-counter audio (faster clicks = stronger signal).
+       Audio is OFF by default.
+  Up arrow /  down arrow  when audio is on, these raise/lower the volume
+  back arrow    back (stops the hunt)
+
+
+PAIRING / PASSKEYS
+------------------
+If a device needs a passkey, a popup appears:
+  - Numeric Comparison: a 6-digit code shows - confirm it matches the other
+    device (auto-accepted on the Cardputer side).
+  - Passkey Entry: type the 6 digits shown on the other device, then Enter.
+
+
+ESC MENU (Main screen, esc key)
+-----------------------------
+  Enter   disconnect the current device (if connected)
+  c       forget ALL bonds
+  any     cancel
+
+
+MITM PROXY (advanced / experimental - known limitations)
+--------------------------------------------------------
+Sits between a target device and a host, forwarding traffic and logging it.
+From Devices -> a device -> "MITM proxy":
+  1. It connects + pairs + dumps the target, then REBOOTS into proxy mode.
+  2. After reboot it advertises as a clone of the target AND reconnects to
+     the real target. Header shows a "MITM" tag.
+  3. Connect your host (e.g. a laptop) to the clone; traffic relays both
+     ways and shows in BLE Honeypot.
+Stop it from Settings -> Stop MITM proxy.
+
+
+TYPICAL FIRST TEST
+------------------
+1. Main -> Scan (type a duration if you like) -> right/Enter.
+2. On the Devices list -> pick a device -> Connect.
+3. Open Recon & Analysis -> GATT and press right to dump it.
+4. For a BLE keyboard or heart-rate strap, try Recon & Analysis -> Live Stream.
+5. To clone: Adversarial -> Clone -> Save current dump... -> name it ->
+   then Advertise loaded. (Cardputer reboots to set the cloned parameters,
+   then starts advertising.)
+6. To proxy: Adversarial -> MITM proxy -> pick the target. It connects,
+   pairs, dumps, and reboots into proxy mode; connect a host and watch
+   BLE Honeypot.
