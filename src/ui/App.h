@@ -71,6 +71,7 @@ class App {
   bool connectCanceled_ = false;
   void doDump();
   void foxhuntSelected();
+  void cloneSelected();  // connect + dump the target, then start the clone-save flow
   void mitmSelected();   // connect+pair+dump target, then start the MITM proxy
   void runCommand(const String& cmd);
 
@@ -79,6 +80,15 @@ class App {
   bool spiBegun_ = false;
   bool sdInit();
   void saveDumpToSd();
+  // SD is organized under one ChimeraBLE folder, resolved case-insensitively at
+  // mount (adopts an existing "chimerable" / "CHIMERABLE" / ... else creates the
+  // canonical name), so a mis-cased folder still works. oui.bin is located
+  // flexibly: the base folder first, then the SD root, filename matched any-case.
+  String sdBase_ = "/ChimeraBLE";
+  void   resolveSdBase();
+  String dumpDir() const { return sdBase_ + "/ble_dumps"; }
+  String findFileCI(const String& dir, const char* name);
+  String findOuiPath();
 
   // scan-time entry (typing digits while "Scan" is highlighted on the main menu)
   uint32_t scanSecs_ = 10;

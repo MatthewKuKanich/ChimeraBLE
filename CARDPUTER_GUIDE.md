@@ -59,7 +59,8 @@ Passive inspection tools (the "Host" head):
     device requests it (toggle **Settings -> Auto-pair** to force it). Press
     ESC to abort if the "Connecting..." popup hangs.
   - **Foxhunt / Track** - signal-strength hunt for this device.
-  - **MITM proxy** - man-in-the-middle this device.
+  - **Clone** - connect + dump this device, then save it as a clone profile (and
+    optionally advertise it). MITM lives under Adversarial.
 - **GATT** - services and characteristics of the connected (or last-dumped)
   device, decoded where known. Scroll with up/down. Right/Enter **dumps** the
   device the first time; once a dump exists, Right/Enter **saves it as a clone

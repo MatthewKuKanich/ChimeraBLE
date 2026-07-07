@@ -73,21 +73,20 @@ const char* kCloneActionItems[] = {
 const char* kDetailMenu[] = {
     "Connect",
     "Foxhunt / Track",
-    "MITM proxy",
+    "Clone",   // MITM stays on the Adversarial menu; Clone is the reliable action here
 };
 
 template <size_t N>
 constexpr size_t countOf(const char* const (&)[N]) { return N; }
 
 // ---- SD card (Cardputer ADV microSD) ----
-// Everything ChimeraBLE writes to the card lives under one folder so it never
-// litters the SD root (clone profiles, Sentry rules, dumps, honeypot logs, and
-// the OUI DB). Created on first launch (see App::sdInit); a user can also make it
-// by hand and drop oui.bin inside. A macro so subpaths build by literal concat.
+// Everything ChimeraBLE writes to the card lives under one folder (App::sdBase_)
+// so it never litters the SD root (clone profiles, Sentry rules, dumps, honeypot
+// logs, and the OUI DB). The folder is resolved case-insensitively at mount and
+// created if missing (see App::resolveSdBase); CHIMERA_SD_DIR is the canonical
+// name used when none exists yet.
 #define CHIMERA_SD_DIR "/ChimeraBLE"
 constexpr int kSdSck = 40, kSdMiso = 39, kSdMosi = 14, kSdCs = 12;
-constexpr const char* kSdRoot  = CHIMERA_SD_DIR;
-constexpr const char* kDumpDir = CHIMERA_SD_DIR "/ble_dumps";
 
 // Filesystem-safe slug: keep alphanumerics, collapse runs of other chars to a
 // single '_', trim, cap length. e.g. "Sonos Roam!" -> "Sonos_Roam".
@@ -129,9 +128,10 @@ void App::honeypotTick() {
     hpLines_.clear();
     if (hpFileOpen_) { hpFile_.close(); hpFileOpen_ = false; }
     if (sdInit()) {
-      if (!SD.exists(CHIMERA_SD_DIR "/honeypot")) SD.mkdir(CHIMERA_SD_DIR "/honeypot");
-      char path[64];
-      snprintf(path, sizeof(path), CHIMERA_SD_DIR "/honeypot/hp_%lu.log", (unsigned long)millis());
+      String hpDir = sdBase_ + "/honeypot";
+      if (!SD.exists(hpDir.c_str())) SD.mkdir(hpDir.c_str());
+      char path[96];
+      snprintf(path, sizeof(path), "%s/hp_%lu.log", hpDir.c_str(), (unsigned long)millis());
       hpFile_ = SD.open(path, FILE_WRITE);
       hpFileOpen_ = (bool)hpFile_;
       if (hpFileOpen_) {
@@ -237,9 +237,17 @@ void App::begin() {
   // partition isn't present at runtime. Must run before applyBootSpoof so a
   // pending spoof/MITM profile loads from whichever store it was saved to.
   if (sdInit()) {
-    clone::setStorage(&SD, CHIMERA_SD_DIR "/clones");
-    sentry::setStorage(&SD, CHIMERA_SD_DIR "/sentry");
-    oui_db::begin(SD, CHIMERA_SD_DIR "/oui.bin");   // put oui.bin in /ChimeraBLE for vendor names
+    clone::setStorage(&SD, (sdBase_ + "/clones").c_str());
+    sentry::setStorage(&SD, (sdBase_ + "/sentry").c_str());
+    // Locate oui.bin flexibly: base folder first, then the SD root, filename
+    // matched case-insensitively - a misplaced or oddly-cased file still loads.
+    String ouiPath = findOuiPath();
+    if (ouiPath.length()) {
+      oui_db::begin(SD, ouiPath.c_str());
+      if (oui_db::available()) log(String("OUI vendor DB: ") + ouiPath);
+    }
+    if (!oui_db::available())
+      log(String("no oui.bin found (put it in ") + sdBase_ + " for vendor names)");
     log("clone storage: SD card");
   } else {
     log("no SD - clone uses flash; OUI vendor lookups disabled");
@@ -781,7 +789,7 @@ void App::activate() {
       switch (selection_) {
         case 0: connectSelected(); break;
         case 1: foxhuntSelected(); break;
-        case 2: mitmSelected(); break;
+        case 2: cloneSelected(); break;
       }
       break;
 
@@ -1140,11 +1148,61 @@ bool App::sdInit() {
   if (sdReady_) return true;
   if (!spiBegun_) { SPI.begin(kSdSck, kSdMiso, kSdMosi, kSdCs); spiBegun_ = true; }
   sdReady_ = SD.begin(kSdCs, SPI, 25000000);
-  // Ensure the single ChimeraBLE folder exists before anything writes beneath it
-  // (clone/sentry subdirs, dumps, honeypot logs). mkdir isn't recursive, so the
-  // parent has to exist first - this is the "created on first launch" behavior.
-  if (sdReady_ && !SD.exists(kSdRoot)) SD.mkdir(kSdRoot);
+  // Resolve (case-insensitively) or create the ChimeraBLE base folder before
+  // anything writes beneath it. mkdir isn't recursive, so the parent must exist.
+  if (sdReady_) resolveSdBase();
   return sdReady_;
+}
+
+// Find the ChimeraBLE working folder on the card. FAT is usually case-insensitive,
+// but to be safe we scan the root for a directory matching "ChimeraBLE" in any
+// case (so a user who made "chimerable" still works) and adopt its real name;
+// otherwise we create the canonical one. Sets sdBase_.
+void App::resolveSdBase() {
+  sdBase_ = CHIMERA_SD_DIR;                 // canonical default
+  File root = SD.open("/");
+  if (root && root.isDirectory()) {
+    for (File e = root.openNextFile(); e; e = root.openNextFile()) {
+      if (!e.isDirectory()) continue;
+      String name = e.name();
+      int slash = name.lastIndexOf('/');
+      if (slash >= 0) name = name.substring(slash + 1);
+      if (name.equalsIgnoreCase("ChimeraBLE")) { sdBase_ = String("/") + name; break; }
+    }
+  }
+  if (root) root.close();
+  if (!SD.exists(sdBase_.c_str())) SD.mkdir(sdBase_.c_str());
+}
+
+// Case-insensitive lookup of <name> directly inside <dir>. Returns the full path
+// or "" if absent - so a mis-cased oui.bin (OUI.BIN, Oui.bin) still loads.
+String App::findFileCI(const String& dir, const char* name) {
+  File d = SD.open(dir.c_str());
+  String found;
+  if (d && d.isDirectory()) {
+    for (File e = d.openNextFile(); e; e = d.openNextFile()) {
+      if (e.isDirectory()) continue;
+      String base = e.name();
+      int slash = base.lastIndexOf('/');
+      if (slash >= 0) base = base.substring(slash + 1);
+      if (base.equalsIgnoreCase(name)) {
+        found = dir;
+        if (!found.endsWith("/")) found += "/";
+        found += base;
+        break;
+      }
+    }
+  }
+  if (d) d.close();
+  return found;
+}
+
+// Locate oui.bin: prefer the ChimeraBLE base folder, then fall back to the SD
+// root. Both matched case-insensitively. "" if nowhere on the card.
+String App::findOuiPath() {
+  String p = findFileCI(sdBase_, "oui.bin");
+  if (p.length()) return p;
+  return findFileCI("/", "oui.bin");
 }
 
 // Auto-save the just-dumped device (info + GATT tree) to
@@ -1153,7 +1211,8 @@ void App::saveDumpToSd() {
   if (!gatt::hasCache()) return;
   ui_.message("Saving to SD...");
   if (!sdInit()) { log("SD not available (no card?)"); return; }
-  if (!SD.exists(kDumpDir)) SD.mkdir(kDumpDir);
+  String ddir = dumpDir();
+  if (!SD.exists(ddir.c_str())) SD.mkdir(ddir.c_str());
 
   std::string peer = gatt::cachedPeer();
   const scanner::Result* r = peer.empty() ? nullptr : scanner::findByMac(peer.c_str());
@@ -1168,7 +1227,7 @@ void App::saveDumpToSd() {
   String mac;
   for (char c : peer) if (c != ':') mac += (char)toupper((unsigned char)c);
   if (mac.length() == 0) mac = "unknown";
-  String path = String(kDumpDir) + "/" + (base.length() ? base + "_" : "") + mac + ".txt";
+  String path = ddir + "/" + (base.length() ? base + "_" : "") + mac + ".txt";
 
   File f = SD.open(path.c_str(), FILE_WRITE);
   if (!f) { log("SD open failed"); return; }
@@ -1235,7 +1294,7 @@ void App::saveDumpToSd() {
 void App::refreshDumpFiles() {
   dumpFiles_.clear();
   if (!sdInit()) { log("SD not available"); return; }
-  File dir = SD.open(kDumpDir);
+  File dir = SD.open(dumpDir().c_str());
   if (!dir || !dir.isDirectory()) return;
   for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
     if (e.isDirectory()) continue;
@@ -1250,7 +1309,7 @@ void App::loadDumpFile(const String& name) {
   dumpViewName_ = name;
   dumpViewLines_.clear();
   if (!sdInit()) return;
-  File f = SD.open((String(kDumpDir) + "/" + name).c_str(), FILE_READ);
+  File f = SD.open((dumpDir() + "/" + name).c_str(), FILE_READ);
   if (!f) { dumpViewLines_.push_back("(failed to open)"); return; }
   String line;
   // Read line-by-line, capped so a huge file can't exhaust RAM.
@@ -1277,7 +1336,7 @@ void App::performDelete() {
     return;
   }
   if (!sdInit() || deleteTarget_.length() == 0) return;
-  String path = String(kDumpDir) + "/" + deleteTarget_;
+  String path = dumpDir() + "/" + deleteTarget_;
   bool ok = SD.remove(path.c_str());
   log(String(ok ? "deleted " : "delete failed ") + deleteTarget_);
   deleteTarget_ = "";
@@ -1314,6 +1373,52 @@ void App::foxhuntSelected() {
   log(String("foxhunt ") + r->addr.c_str());
   foxhuntReturn_ = MenuScreen::DeviceDetail;
   enterScreen(MenuScreen::Foxhunt);
+}
+
+// One-tap clone from the Device Detail screen: connect to the device (reusing the
+// link if it's already this one), dump its GATT tree, then jump straight into the
+// clone-save flow (name entry -> save -> optional advertise). MITM stays on the
+// Adversarial menu; Clone is the reliable action to surface here.
+void App::cloneSelected() {
+  const auto* r = scanner::findByIndex(selectedDevice_);
+  if (!r) { log("no device selected"); return; }
+  if (scanner::isScanning()) scanner::stop();
+
+  // Already connected to THIS device? Keep the link (and any dump we have).
+  bool sameDevice = false;
+  if (connection::isConnected() && connection::client()) {
+    std::string cur = connection::client()->getPeerAddress().toString();
+    std::string want = r->addr;
+    for (auto& c : cur)  c = (char)tolower((unsigned char)c);
+    for (auto& c : want) c = (char)tolower((unsigned char)c);
+    sameDevice = (cur == want);
+  }
+
+  if (!sameDevice) {
+    if (connection::isConnected()) {
+      if (!confirmBlocking("Switch device?", "drop current connection")) return;
+      connection::disconnect();
+      uint32_t t0 = millis();
+      while (connection::isConnected() && millis() - t0 < 2000) { M5Cardputer.update(); delay(20); }
+    }
+    gatt::clearCache();
+    ui_.message("Connecting...", r->addr.c_str(), 2, "ESC = stop");
+    log(String("connecting ") + r->addr.c_str());
+    connectCanceled_ = false;
+    if (!connection::connectTo(*r, [this] { return connectCancelRequested(); })) {
+      if (connectCanceled_) { log("connect canceled"); popup("Canceled", "connection stopped", 1200); }
+      else { log("connect failed"); popup("Connect failed", "out of range or busy"); }
+      return;
+    }
+    log("connected (pairing in background)");
+  }
+
+  // Need a dumped tree to clone; dump now if we don't already have one.
+  if (!gatt::hasCache()) doDump();
+  if (!gatt::hasCache()) { popup("Clone", "dump failed - try Connect first"); return; }
+
+  enterScreen(MenuScreen::Gatt);   // show the dumped tree behind the name prompt
+  startCloneSave();                // name entry -> save -> advertise chain
 }
 
 // Connect to the target, wait for pairing, dump it, then stand up the MITM proxy.

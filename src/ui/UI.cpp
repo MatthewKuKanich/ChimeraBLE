@@ -39,7 +39,7 @@ constexpr uint16_t kAccent    = 0x07FF;   // cyan (tags, service lines)
 constexpr uint16_t kBarFill   = 0x07E0;   // green
 constexpr uint16_t kBarTrack  = 0x2104;   // empty bar track
 // Shown on the About screen (Settings -> About). Bump on each tagged release.
-constexpr const char* kAboutVersion = "v1.0.0";
+constexpr const char* kAboutVersion = "v1.0.1";
 }  // namespace
 
 void UI::begin() {
