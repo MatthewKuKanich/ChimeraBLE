@@ -9,7 +9,7 @@
 //
 // The panel's reset and backlight are NOT GPIOs: they live on the 0x24 I/O
 // expander, brought up by WsC5_35::begin() before tft.init(). Hence
-// TFT_RST -1 and no TFT_BL. Pin values mirror src/board/ws_c5_35/ws_c5_35_pins.h.
+// TFT_RST -1 and no TFT_BL. Pin values mirror the BSP's ws_c5_35_pins.h.
 #pragma once
 
 #define USER_SETUP_INFO "ChimeraBLE / Waveshare C5 3.5 / ST7796 / FT6336"

@@ -4,18 +4,18 @@
 #include "soc/soc_caps.h"
 #include <stdint.h>
 
-// Waveshare ESP32-C5-Touch-LCD-3.5. Based on the NM-CYD-C5 variant (same C5
-// core, same display SPI bus 6/7/2), with three deliberate differences:
+// Waveshare ESP32-C5-Touch-LCD-3.5 variant, from the ESP32-C5-BSP. It follows
+// the NM-CYD-C5 variant (same C5 core, same display SPI bus 6/7/2), with three
+// deliberate differences:
 //
-//  * NO RGB_LED on GPIO27. On this board GPIO27 is the I2C SDA line (touch,
-//    I/O expander, codec, RTC, PMU, IMU), NOT a WS2812. Defining a status LED
-//    on it -- as the NM-CYD-C5 variant does -- would collide with every I2C
-//    device. StatusLight is compiled out for WS_C5_35 (see status_light.cpp).
+//  * No RGB LED. On this board GPIO27 is the I2C SDA line (touch, I/O expander,
+//    codec, RTC, PMU, IMU), not a WS2812; a status LED defined on it would
+//    collide with every I2C device.
 //  * SD card CS is GPIO9 (NM-CYD-C5 is GPIO10), on the shared display bus.
 //  * No TFT_* / USER_SETUP_LOADED here: the display is configured solely by
-//    include/wsc5_user_setup.h (force-included by the env), so the pin map
-//    lives in exactly one place and cannot disagree with itself. GPIO16/17 are
-//    the C5's internal MSPI flash/PSRAM pins and are never referenced.
+//    tools/ws_c5_35/tft_setup.h (force-included by the ws_c5_35 env), so the
+//    pin map lives in exactly one place. GPIO16/17 are the C5's internal MSPI
+//    flash/PSRAM pins and are never referenced.
 
 static const uint8_t TX = 11;
 static const uint8_t RX = 12;
@@ -52,8 +52,8 @@ static const uint8_t LP_TX = 11;
 #define SPI_MISO_PIN 2
 #define SPI_SS_PIN 9
 
-// microSD, on the display's SPI bus. CS 9; driven through the display driver's
-// own SPI instance (see sd_log.cpp) so it never tears down the live bus.
+// microSD, on the display's SPI bus, CS 9. Mount it on the same SPI object the
+// display driver uses, so opening the card never re-initialises the live bus.
 #define SDCARD_CS 9
 #define SDCARD_SCK SPI_SCK_PIN
 #define SDCARD_MISO SPI_MISO_PIN
