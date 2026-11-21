@@ -91,6 +91,17 @@ class UI {
   bool canvasReady_ = false;
   uint32_t lastDrawMs_ = 0;
 
+  // Which rows of a list to draw and where the first one goes. Keyboard builds
+  // page by the selection; touch builds (CHIMERA_TOUCH_UI) scroll by dragging.
+  struct ListSpan { size_t start; size_t end; int16_t y0; };
+  ListSpan listSpan(const MenuView& menu, size_t count, int rows, int16_t startY,
+                    int16_t rowH, int16_t h);
+#if defined(CHIMERA_TOUCH_UI)
+  // One on-screen button in the bottom bar; slot 0 = left half, 1 = right half,
+  // 2 = full width. A tap presses `key`.
+  void drawTouchButton(int slot, const char* label, char key, bool primary);
+#endif
+
   void drawHeader(const MenuView& menu, int16_t w);
   void drawBattery(int16_t x, int16_t y, int level, bool charging);
   void drawFooter(const MenuView& menu, const String& inputBuffer, int16_t w, int16_t h);
