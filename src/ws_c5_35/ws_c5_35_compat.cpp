@@ -6,6 +6,9 @@
 
 #include "M5Cardputer.h"
 
+#include <ESP_I2S.h>
+#include <atomic>
+#include <board/ws_c5_35/ws_c5_35_audio.h>
 #include <board/ws_c5_35/ws_c5_35_battery.h>
 #include <board/ws_c5_35/ws_c5_35_board.h>
 
@@ -49,6 +52,85 @@ uint8_t colorIndex(uint16_t c) {
   lastColor = c;
   lastIndex = best;
   return best;
+}
+
+// ---- tones ---------------------------------------------------------------
+//
+// The codec and I2S are started on the first tone, from the UI task (the BSP
+// wants one task talking to the codec). After that a small task renders each
+// requested tone into the I2S stream; the I2S driver sends silence by itself
+// when nothing is written.
+
+namespace Audio = WsC5_35::Audio;
+
+I2SClass g_i2s;
+enum class ToneState : uint8_t { Off, Ready, Failed };
+ToneState g_toneState = ToneState::Off;
+TaskHandle_t g_toneTask = nullptr;
+std::atomic<uint32_t> g_toneRequest{0};   // (frequency Hz << 16) | duration ms; 0 = none
+std::atomic<bool> g_toneStop{false};
+std::atomic<int32_t> g_tonePeak{80 * 40};
+int16_t g_sine[256];
+
+// Codec DAC volume. The BSP measured PCM peak 12000 clipping at this setting,
+// so the loudest UI volume (255) is mapped to a peak of 10200.
+constexpr uint8_t kCodecVolume = 0xE0;
+constexpr int32_t kPeakPerVolumeStep = 40;
+
+void toneTaskMain(void*) {
+  constexpr uint32_t kChunk = 128;                      // frames per write (8 ms)
+  constexpr uint32_t kRamp = Audio::SAMPLE_RATE / 500;  // 2 ms fade in/out: no clicks
+  static int16_t pcm[2 * kChunk];
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    uint32_t request = g_toneRequest.exchange(0);
+    while (request) {
+      g_toneStop = false;
+      const uint32_t frames = Audio::SAMPLE_RATE * (request & 0xFFFF) / 1000;
+      const uint32_t step =
+          (uint32_t)((((uint64_t)(request >> 16)) << 32) / Audio::SAMPLE_RATE);
+      const int32_t peak = g_tonePeak;
+      uint32_t phase = 0;
+      uint32_t n = 0;
+      // A newer request or stop() ends this tone early.
+      while (n < frames && !g_toneStop && g_toneRequest.load() == 0) {
+        const uint32_t count = min(kChunk, frames - n);
+        for (uint32_t i = 0; i < count; ++i, ++n) {
+          int32_t gain = 256;
+          if (n < kRamp) gain = (int32_t)(256 * n / kRamp);
+          else if (frames - n <= kRamp) gain = (int32_t)(256 * (frames - n) / kRamp);
+          const int32_t sample = ((g_sine[phase >> 24] * peak) >> 15) * gain >> 8;
+          pcm[2 * i] = pcm[2 * i + 1] = (int16_t)sample;
+          phase += step;
+        }
+        g_i2s.write((const uint8_t*)pcm, count * 4);
+      }
+      request = g_toneRequest.exchange(0);
+    }
+  }
+}
+
+bool toneReady() {
+  if (g_toneState != ToneState::Off) return g_toneState == ToneState::Ready;
+  g_toneState = ToneState::Failed;
+  g_i2s.setPins(Audio::BCLK, Audio::LRCK, Audio::DOUT, -1, Audio::MCLK);
+  if (!g_i2s.begin(I2S_MODE_STD, Audio::SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT,
+                   I2S_SLOT_MODE_STEREO)) {
+    Serial.println("[ws-c5-35] sound off: I2S did not start");
+    return false;
+  }
+  if (!Audio::begin(kCodecVolume)) {
+    g_i2s.end();
+    Serial.println("[ws-c5-35] sound off: ES8311 codec did not answer");
+    return false;
+  }
+  for (int i = 0; i < 256; ++i) g_sine[i] = (int16_t)(32767.0f * sinf(2.0f * PI * i / 256.0f));
+  if (xTaskCreate(toneTaskMain, "tone", 3072, nullptr, 2, &g_toneTask) != pdPASS) {
+    Serial.println("[ws-c5-35] sound off: no memory for the tone task");
+    return false;
+  }
+  g_toneState = ToneState::Ready;
+  return true;
 }
 
 }  // namespace
@@ -179,6 +261,24 @@ void KeyboardShim::latch(char key) {
   else if (key == touchui::kBackspace) state_.del = true;
   else state_.word.push_back(key);
   fresh_ = true;
+}
+
+// ----------------------------------------------------------------- speaker
+
+void SpeakerShim::setVolume(uint8_t volume) { g_tonePeak = volume * kPeakPerVolumeStep; }
+
+void SpeakerShim::tone(float frequency, uint32_t ms) {
+  if (g_tonePeak == 0 || ms == 0 || !toneReady()) return;
+  // The stream is 16 kHz: keep tones well under half of that.
+  const uint32_t hz = (uint32_t)constrain(frequency, 100.0f, 6000.0f);
+  if (ms > 5000) ms = 5000;
+  g_toneRequest = (hz << 16) | ms;
+  xTaskNotifyGive(g_toneTask);
+}
+
+void SpeakerShim::stop() {
+  g_toneRequest = 0;
+  g_toneStop = true;
 }
 
 // ------------------------------------------------------------------- power

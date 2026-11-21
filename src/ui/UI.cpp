@@ -85,6 +85,10 @@ bool touchAction(const MenuView& menu, const char*& label, char& key) {
       label = "Delete";
       key = 'x';
       return true;
+    case MenuScreen::Foxhunt:
+      label = menu.audioOn ? "Sound: on" : "Sound: off";
+      key = 'a';
+      return true;
     case MenuScreen::Sentry:
       // Rules follow the three fixed actions; a tapped rule is the selection.
       label = "Delete rule";

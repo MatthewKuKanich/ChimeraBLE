@@ -15,7 +15,9 @@
 //            rows that changed since the last frame are sent to the panel.
 //   Keyboard Fed by the touch layer (TouchUI.h): taps on on-screen targets and
 //            drags arrive as the key presses the App already handles.
-//   Speaker  Silent for now. Power: battery gauge through the ESP32-C5-BSP.
+//   Speaker  Tones through the ES8311 codec and the onboard amplifier, played
+//            from a background task so tone() returns at once.
+//   Power    Battery gauge through the ESP32-C5-BSP.
 #pragma once
 
 #include <Arduino.h>
@@ -71,9 +73,9 @@ class KeyboardShim {
 
 class SpeakerShim {
  public:
-  void setVolume(uint8_t) {}
-  void tone(float, uint32_t) {}
-  void stop() {}
+  void setVolume(uint8_t volume);              // 0..255, 0 = silent
+  void tone(float frequency, uint32_t ms);     // returns at once; replaces a playing tone
+  void stop();
 };
 
 class PowerShim {
