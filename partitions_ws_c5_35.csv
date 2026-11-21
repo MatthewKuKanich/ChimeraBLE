@@ -1,0 +1,14 @@
+# Partition table for the Waveshare ESP32-C5-Touch-LCD-3.5 (16 MB flash).
+#
+# Same layout as the ESP32-C5-BSP two-slot table (nvs and otadata at the
+# standard offsets, two 6 MB app slots, coredump), with the space after it given
+# to LittleFS: ChimeraBLE keeps the OUI database (~1.1 MB) and clone profiles
+# there. Arduino's LittleFS mounts the partition labelled "spiffs".
+#
+# Name,   Type, SubType, Offset,    Size,     Flags
+nvs,      data, nvs,     0x9000,    0x5000,
+otadata,  data, ota,     0xe000,    0x2000,
+app0,     app,  ota_0,   0x10000,   0x600000,
+app1,     app,  ota_1,   0x610000,  0x600000,
+coredump, data, coredump,0xC10000,  0x10000,
+spiffs,   data, spiffs,  0xC20000,  0x3E0000,
