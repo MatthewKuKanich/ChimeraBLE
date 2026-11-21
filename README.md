@@ -24,6 +24,8 @@ Built on [NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino) 2.x.
 | `esp32dev` | ESP32 WROOM | classic Xtensa dual-core | serial CLI |
 | `xiao_esp32c5` | Seeed Studio XIAO ESP32-C5 | RISC-V single-core | serial CLI |
 | `cardputer` | M5Stack Cardputer ADV | ESP32-S3 (Stamp-S3A) | on-device M5 UI |
+| `ws_c5_35` | Waveshare ESP32-C5-Touch-LCD-3.5 | RISC-V single-core | on-device touch UI |
+| `ws_c5_35_cli` | Waveshare ESP32-C5-Touch-LCD-3.5 | RISC-V single-core | serial CLI |
 
 All targets use the [pioarduino](https://github.com/pioarduino/platform-espressif32)
 platform (Arduino-ESP32 3.x / ESP-IDF 5.5) and **share the same BLE engine**
@@ -31,7 +33,9 @@ platform (Arduino-ESP32 3.x / ESP-IDF 5.5) and **share the same BLE engine**
 `fingerprint`, `clone`). `build_src_filter` swaps only the front-end: the serial
 targets use `main.cpp` + `cli.cpp`; the Cardputer uses [`src/ui/`](src/ui/) (an
 M5 menu UI in `App`/`UI`) and runs the engine natively on its own S3 radio - no
-companion device. The XIAO ESP32-C5 board def lives in
+companion device. The `ws_c5_35` target runs the same `src/ui` on the Waveshare
+ESP32-C5-Touch-LCD-3.5, driven by touch instead of a keyboard. The XIAO ESP32-C5
+board def lives in
 [`boards/seeed_xiao_esp32c5.json`](boards/seeed_xiao_esp32c5.json).
 
 ---
@@ -83,6 +87,28 @@ scan results (RSSI + name or `~fingerprint`); select one for **Device Detail**
 (Connect+dump, or Foxhunt). **Foxhunt** shows a live signal bar. Anything the
 serial CLI can do is reachable from command mode, since both share the same
 dispatch (`cli::execute`).
+
+### Waveshare ESP32-C5-Touch-LCD-3.5 (on-device touch UI)
+
+`ws_c5_35` runs the same `src/ui` on the board's 3.5" ST7796 touch panel, with a
+touch layout in place of the Cardputer keyboard; `ws_c5_35_cli` is the serial CLI
+front-end for the same board. The board (display, touch, backlight, battery, codec)
+is brought up through [ESP32-C5-BSP](https://github.com/slickrick773/ESP32-C5-BSP);
+TFT_eSPI has no ESP32-C5 processor file, so a pre-build script adds one for this env.
+
+```sh
+pio run -e ws_c5_35 -t upload       # on-device touch UI
+pio run -e ws_c5_35_cli -t upload   # serial CLI
+```
+
+Touch navigation: tap a row to open it, drag a list to scroll, and use the back
+button (top-left) to go up. A bottom button bar appears where a screen has an action
+(Dump / Clone / Delete / fox-hunt sound), and prompts show Cancel / OK. An on-screen
+keyboard covers the command line, clone names, Sentry values and passkeys.
+
+On this board the OUI vendor database is read from `/ChimeraBLE/oui.bin` on the
+microSD card (not LittleFS); build it with `tools/make_oui_bin.py` and copy it to
+the card.
 
 ---
 

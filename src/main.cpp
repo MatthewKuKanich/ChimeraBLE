@@ -13,6 +13,10 @@
 #include "oui_db.h"
 #include "scanner.h"
 
+#if defined(CHIMERA_BOARD_WS_C5_35)
+#include <board/ws_c5_35/ws_c5_35_board.h>
+#endif
+
 static void banner() {
     Serial.println();
     Serial.println("=========================================");
@@ -29,6 +33,15 @@ void setup() {
     delay(500);
 
     banner();
+
+#if defined(CHIMERA_BOARD_WS_C5_35)
+    // Waveshare ESP32-C5-Touch-LCD-3.5: release the panel reset and park the shared
+    // SPI chip selects. The backlight stays off - this target is serial-only until
+    // an on-device UI exists.
+    if (!WsC5_35::begin(0)) {
+        Serial.println("[board] I/O expander did not answer");
+    }
+#endif
 
     if (!LittleFS.begin(true)) {
         Serial.println("[fs] LittleFS mount failed (clone save/load + OUI DB unavailable)");

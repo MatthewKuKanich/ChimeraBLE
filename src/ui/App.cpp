@@ -22,6 +22,10 @@
 #include "sentry.h"
 #include "uuid_db.h"
 
+#if defined(CHIMERA_TOUCH_UI)
+#include "TouchUI.h"
+#endif
+
 namespace {
 
 // Main menu has 5 entries; item 0 (Scan) is built dynamically (shows the current
@@ -86,7 +90,12 @@ constexpr size_t countOf(const char* const (&)[N]) { return N; }
 // created if missing (see App::resolveSdBase); CHIMERA_SD_DIR is the canonical
 // name used when none exists yet.
 #define CHIMERA_SD_DIR "/ChimeraBLE"
+#if defined(CHIMERA_BOARD_WS_C5_35)
+// Waveshare ESP32-C5-Touch-LCD-3.5: the card sits on the display's SPI bus.
+constexpr int kSdSck = 6, kSdMiso = 2, kSdMosi = 7, kSdCs = 9;
+#else
 constexpr int kSdSck = 40, kSdMiso = 39, kSdMosi = 14, kSdCs = 12;
+#endif
 
 // Filesystem-safe slug: keep alphanumerics, collapse runs of other chars to a
 // single '_', trim, cap length. e.g. "Sonos Roam!" -> "Sonos_Roam".
@@ -382,10 +391,34 @@ void App::engineTick() {
 // ----------------------------------------------------------------- input
 
 void App::handleKeyboard() {
+#if defined(CHIMERA_TOUCH_UI)
+  // Touch front-end: a tap on a row selects it and opens it. (Modal prompts
+  // declare no rows, so this never fires under one.)
+  int tappedRow = 0;
+  if (touchui::takeRowTap(tappedRow)) {
+    moveSelection(tappedRow - selection_);
+    activate();
+    return;
+  }
+#endif
   if (!M5Cardputer.Keyboard.isChange() || !M5Cardputer.Keyboard.isPressed()) {
     return;
   }
   Keyboard_Class::KeysState keys = M5Cardputer.Keyboard.keysState();
+
+#if defined(CHIMERA_TOUCH_UI)
+  // The on-screen keyboard's Cancel key ends whichever text entry is open (the
+  // keyboard build does this with Backspace on an empty line).
+  for (char c : keys.word) {
+    if (c != touchui::kCancel) continue;
+    if (passkeyMode_) { connection::disconnect(); passkeyBuf_ = ""; passkeyMode_ = false; }
+    sentryEntry_ = false;
+    cloneNameEntry_ = false;
+    commandMode_ = false;
+    inputBuffer_.clear();
+    return;
+  }
+#endif
 
   // Passkey-entry modal: type the digits shown on the peer. Enter injects,
   // backspace edits (or cancels+disconnects when empty).

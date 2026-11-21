@@ -16,6 +16,17 @@
 #include "scanner.h"
 #include "uuid_db.h"
 
+// Touch front-end (boards with a touch panel and no keyboard). The renderer
+// declares what can be tapped or dragged each frame; see TouchUI.h.
+#if defined(CHIMERA_TOUCH_UI)
+#include "TouchUI.h"
+#define TOUCH_ROW(x, y, w, h, i) touchui::addRow((x), (y), (w), (h), (int)(i))
+#define TOUCH_LINES(top, bottom, lineH) touchui::lines((top), (bottom), (lineH))
+#else
+#define TOUCH_ROW(x, y, w, h, i) ((void)0)
+#define TOUCH_LINES(top, bottom, lineH) ((void)0)
+#endif
+
 // CP437 arrow glyphs, matching the Cardputer's orange key legends:
 //   ; = up (0x18)   . = down (0x19)   / = right (0x1A)   , = left (0x1B)
 #define A_UP "\x18"
@@ -40,6 +51,54 @@ constexpr uint16_t kBarFill   = 0x07E0;   // green
 constexpr uint16_t kBarTrack  = 0x2104;   // empty bar track
 // Shown on the About screen (Settings -> About). Bump on each tagged release.
 constexpr const char* kAboutVersion = "v1.0.1";
+
+#if defined(CHIMERA_TOUCH_UI)
+constexpr int16_t kTouchBarH = 24;   // bottom button bar
+
+// On-screen keyboard state. The shift and page keys are handled by the renderer
+// and never reach the App.
+constexpr char kKeyPage = 1, kKeyShift = 2;
+bool g_kbShown = false;     // the frame on screen is the keyboard
+bool g_kbSymbols = false;   // digits/punctuation page
+bool g_kbCaps = false;
+String g_kbSig;             // what the keyboard frame on screen shows
+
+// Start any frame that is not the keyboard.
+void touchFrame(uint8_t id) {
+  g_kbShown = false;
+  touchui::frameBegin(id);
+}
+
+// The one action a screen offers beyond tapping its rows (the keyboard build
+// shows these as footer key hints). Returns false when there is none.
+bool touchAction(const MenuView& menu, const char*& label, char& key) {
+  switch (menu.screen) {
+    case MenuScreen::Main:
+      label = "Command line";
+      key = '\'';
+      return true;
+    case MenuScreen::Gatt:
+      label = gatt::hasCache() ? "Clone" : "Dump";
+      key = '/';
+      return gatt::hasCache() || connection::isConnected();
+    case MenuScreen::DumpView:
+      label = "Delete";
+      key = 'x';
+      return true;
+    case MenuScreen::Foxhunt:
+      label = menu.audioOn ? "Sound: on" : "Sound: off";
+      key = 'a';
+      return true;
+    case MenuScreen::Sentry:
+      // Rules follow the three fixed actions; a tapped rule is the selection.
+      label = "Delete rule";
+      key = 'x';
+      return menu.selectedIndex >= 3;
+    default:
+      return false;
+  }
+}
+#endif
 }  // namespace
 
 void UI::begin() {
@@ -75,43 +134,215 @@ void UI::draw(const MenuView& menu, const String& inputBuffer,
   const int16_t w = canvas_.width();
   const int16_t h = canvas_.height();
 
+#if defined(CHIMERA_TOUCH_UI)
+  // No key-hint footer on a touch screen: a screen with an action gets a button
+  // bar, the rest use the full height. hc is the height handed to the screen
+  // code, chosen so its "h - 18" footer arithmetic ends at the bar (or the edge).
+  if (menu.commandMode) {
+    drawTouchKeyboard("Command", inputBuffer + "_", false);
+    return;
+  }
+  touchFrame((uint8_t)menu.screen);
+  const char* barLabel = nullptr;
+  char barKey = 0;
+  const bool hasBar = touchAction(menu, barLabel, barKey);
+  const int16_t hc = h + 18 - (hasBar ? kTouchBarH : 0);
+#else
+  const int16_t hc = h;
+#endif
+
   canvas_.fillSprite(kBg);
   canvas_.fillRect(0, 0, w, 20, kHeader);
+#if !defined(CHIMERA_TOUCH_UI)
   canvas_.fillRect(0, h - 18, w, 18, kHeader);
+#endif
 
   drawHeader(menu, w);
 
   switch (menu.screen) {
-    case MenuScreen::Main:         drawMenuList(menu, w, h); break;
-    case MenuScreen::ReconMenu:    drawMenuList(menu, w, h); break;
-    case MenuScreen::AdvMenu:      drawMenuList(menu, w, h); break;
-    case MenuScreen::Devices:      drawDevices(menu, w, h); break;
-    case MenuScreen::DeviceDetail: drawDeviceDetail(menu, w, h); break;
-    case MenuScreen::Gatt:         drawGatt(menu, w, h); break;
-    case MenuScreen::HidStream:    drawHidStream(w, h); break;
-    case MenuScreen::Foxhunt:      drawFoxhunt(menu, w, h); break;
-    case MenuScreen::Clone:        drawClone(menu, w, h); break;
-    case MenuScreen::Dumps:        drawDumps(menu, w, h); break;
-    case MenuScreen::DumpView:     drawDumpView(menu, w, h); break;
-    case MenuScreen::Settings:     drawSettings(menu, w, h); break;
-    case MenuScreen::Honeypot:     drawHoneypot(menu, w, h); break;
-    case MenuScreen::Sentry:       drawSentryList(menu, w, h); break;
-    case MenuScreen::SentryPick:   drawSentryList(menu, w, h); break;
-    case MenuScreen::StreamSelect: drawSentryList(menu, w, h); break;
-    case MenuScreen::SentryType:   drawMenuList(menu, w, h); break;
-    case MenuScreen::Alert:        drawAlert(menu, w, h); break;
-    case MenuScreen::About:        drawAbout(menu, w, h); break;
-    case MenuScreen::Logs:         drawLogs(logLines, logHead, logCount, menu.scrollOffset, w, h); break;
+    case MenuScreen::Main:         drawMenuList(menu, w, hc); break;
+    case MenuScreen::ReconMenu:    drawMenuList(menu, w, hc); break;
+    case MenuScreen::AdvMenu:      drawMenuList(menu, w, hc); break;
+    case MenuScreen::Devices:      drawDevices(menu, w, hc); break;
+    case MenuScreen::DeviceDetail: drawDeviceDetail(menu, w, hc); break;
+    case MenuScreen::Gatt:         drawGatt(menu, w, hc); break;
+    case MenuScreen::HidStream:    drawHidStream(w, hc); break;
+    case MenuScreen::Foxhunt:      drawFoxhunt(menu, w, hc); break;
+    case MenuScreen::Clone:        drawClone(menu, w, hc); break;
+    case MenuScreen::Dumps:        drawDumps(menu, w, hc); break;
+    case MenuScreen::DumpView:     drawDumpView(menu, w, hc); break;
+    case MenuScreen::Settings:     drawSettings(menu, w, hc); break;
+    case MenuScreen::Honeypot:     drawHoneypot(menu, w, hc); break;
+    case MenuScreen::Sentry:       drawSentryList(menu, w, hc); break;
+    case MenuScreen::SentryPick:   drawSentryList(menu, w, hc); break;
+    case MenuScreen::StreamSelect: drawSentryList(menu, w, hc); break;
+    case MenuScreen::SentryType:   drawMenuList(menu, w, hc); break;
+    case MenuScreen::Alert:        drawAlert(menu, w, hc); break;
+    case MenuScreen::About:        drawAbout(menu, w, hc); break;
+    case MenuScreen::Logs:         drawLogs(logLines, logHead, logCount, menu.scrollOffset, w, hc); break;
   }
 
+#if defined(CHIMERA_TOUCH_UI)
+  canvas_.clearClipRect();
+  if (hasBar) {
+    canvas_.fillRect(0, h - kTouchBarH, w, kTouchBarH, kHeader);
+    drawTouchButton(2, barLabel, barKey, true);
+  }
+#else
   drawFooter(menu, inputBuffer, w, h);
+#endif
   canvas_.pushSprite(&M5Cardputer.Display, 0, 0);
+}
+
+#if defined(CHIMERA_TOUCH_UI)
+void UI::drawTouchButton(int slot, const char* label, char key, bool primary) {
+  const int16_t w = canvas_.width(), h = canvas_.height();
+  const int16_t bw = (slot == 2) ? (w - 12) : (w - 18) / 2;
+  const int16_t bx = (slot == 1) ? (w - 6 - bw) : 6;
+  const int16_t by = h - kTouchBarH + 3, bh = kTouchBarH - 6;
+  const uint16_t fill = primary ? kSelect : kPanel;
+  canvas_.fillRoundRect(bx, by, bw, bh, 5, fill);
+  canvas_.setTextSize(1);
+  canvas_.setTextColor(primary ? kSelectTxt : kText, fill);
+  canvas_.setCursor(bx + (bw - (int16_t)strlen(label) * 6) / 2, by + (bh - 8) / 2);
+  canvas_.print(label);
+  // The whole bar half is the target, not just the drawn button.
+  const int16_t tx = (slot == 1) ? (w / 2) : 0;
+  const int16_t tw = (slot == 2) ? w : (w / 2);
+  touchui::addKey(tx, h - kTouchBarH, tw, kTouchBarH, key);
+}
+#endif
+
+#if defined(CHIMERA_TOUCH_UI)
+void UI::drawTouchKeyboard(const char* title, const String& text, bool numeric) {
+  if (!canvasReady_) return;
+  if (!g_kbShown) { g_kbSymbols = numeric; g_kbCaps = false; }
+  const char local = touchui::takeLocal();
+  if (local == kKeyPage) g_kbSymbols = !g_kbSymbols;
+  else if (local == kKeyShift) g_kbCaps = !g_kbCaps;
+
+  // Prompts are redrawn every loop: skip the work (and keep the frame's key
+  // targets) while nothing on it has changed.
+  const String sig = String(title) + "\n" + text + (g_kbSymbols ? "S" : "L") + (g_kbCaps ? "C" : "c");
+  if (g_kbShown && sig == g_kbSig) return;
+  g_kbSig = sig;
+  touchui::frameBegin(0xFD);
+  g_kbShown = true;
+
+  const int16_t w = canvas_.width();
+  canvas_.fillSprite(kBg);
+  canvas_.fillRect(0, 0, w, 20, kHeader);
+  canvas_.setTextSize(1);
+  canvas_.setTextColor(kText, kHeader);
+  canvas_.setCursor(6, 6);
+  canvas_.print(trimToWidth(String(title), maxCharsForWidth(w - 12, 1)));
+
+  // What has been typed, large; its tail stays in view when it outgrows the box.
+  canvas_.fillRoundRect(4, 24, w - 8, 26, 4, kPanel);
+  const size_t maxChars = maxCharsForWidth(w - 20, 2);
+  const String shown = text.length() > maxChars ? text.substring(text.length() - maxChars) : text;
+  canvas_.setTextSize(2);
+  canvas_.setTextColor(kText, kPanel);
+  canvas_.setCursor(10, 29);
+  canvas_.print(shown);
+
+  // Ten 24-px keys across; the second row is inset half a key, the third sits
+  // between Shift and Backspace.
+  static const char* const kLetters[3] = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
+  static const char* const kSymbols[3] = {"1234567890", "-_:./=+*#", "()!?@',"};
+  const char* const* rows = g_kbSymbols ? kSymbols : kLetters;
+  const int16_t top = 56, rowH = 26, keyW = 24;
+
+  auto key = [&](int16_t x, int16_t y, int16_t kw, const char* label, char code,
+                 uint16_t fill, uint8_t size) {
+    canvas_.fillRoundRect(x + 1, y + 1, kw - 2, rowH - 2, 3, fill);
+    canvas_.setTextSize(size);
+    canvas_.setTextColor(fill == kSelect ? kSelectTxt : kText, fill);
+    const int16_t tw = (int16_t)strlen(label) * 6 * size;
+    canvas_.setCursor(x + (kw - tw) / 2, y + (rowH - 8 * size) / 2);
+    canvas_.print(label);
+    touchui::addKey(x, y, kw, rowH, code, true);
+  };
+
+  static const int16_t kRowX[3] = {0, 12, 36};
+  for (int r = 0; r < 3; ++r) {
+    int16_t x = kRowX[r];
+    const int16_t y = top + r * rowH;
+    for (const char* p = rows[r]; *p; ++p) {
+      char c = *p;
+      if (!g_kbSymbols && g_kbCaps) c = (char)toupper((unsigned char)c);
+      const char label[2] = {c, 0};
+      key(x, y, keyW, label, c, kPanelAlt, 2);
+      x += keyW;
+    }
+  }
+  const int16_t y3 = top + 2 * rowH, y4 = top + 3 * rowH;
+  if (!g_kbSymbols) key(0, y3, 36, "shift", kKeyShift, g_kbCaps ? kSelect : kPanel, 1);
+  key(204, y3, 36, "<-", touchui::kBackspace, kPanel, 1);
+  key(0, y4, 36, g_kbSymbols ? "abc" : "123", kKeyPage, kPanel, 1);
+  key(36, y4, 96, "space", ' ', kPanelAlt, 1);
+  key(132, y4, 54, "Cancel", touchui::kCancel, kPanel, 1);
+  key(186, y4, 54, "OK", touchui::kEnter, kSelect, 1);
+
+  canvas_.setTextSize(1);
+  canvas_.pushSprite(&M5Cardputer.Display, 0, 0);
+  lastDrawMs_ = millis();
+}
+#endif
+
+UI::ListSpan UI::listSpan(const MenuView& menu, size_t count, int rows, int16_t startY,
+                          int16_t rowH, int16_t h) {
+  ListSpan s;
+#if defined(CHIMERA_TOUCH_UI)
+  // Drag-scrolled: rows slide under a clip rectangle, so a partly visible row at
+  // either end is simply cut off.
+  (void)menu;
+  (void)rows;
+  const int16_t bottom = h - 18;
+  const int16_t scroll = touchui::list(startY, bottom, rowH, count);
+  s.start = (size_t)(scroll / rowH);
+  s.y0 = (int16_t)(startY - scroll % rowH);
+  s.end = min(count, s.start + (size_t)((bottom - startY) / rowH) + 2);
+  canvas_.setClipRect(0, startY, canvas_.width(), bottom - startY);
+#else
+  (void)h;
+  const size_t cur = (size_t)max(menu.selectedIndex, 0);
+  s.start = (cur / (size_t)rows) * (size_t)rows;
+  s.end = min(count, s.start + (size_t)rows);
+  s.y0 = startY;
+#endif
+  return s;
 }
 
 void UI::message(const char* title, const char* sub, uint8_t subSize, const char* hint) {
   if (!canvasReady_) return;
   if (subSize < 1) subSize = 1;
   const int16_t w = canvas_.width(), h = canvas_.height();
+#if defined(CHIMERA_TOUCH_UI)
+  // The App words its prompts for a keyboard ("...   Enter=yes  any=no", hint
+  // "ESC = stop"). On a touch screen those become buttons: a prompt that names
+  // Enter gets Cancel / OK, a wait that names ESC gets Stop, and anything else
+  // is dismissed by a tap anywhere. A prompt whose Enter is not a yes/no
+  // ("Enter=save", "Enter=ok") is text entry and gets the on-screen keyboard.
+  const bool asks = (sub && strstr(sub, "Enter")) || (hint && strstr(hint, "Enter"));
+  const bool stoppable = !asks && hint && strstr(hint, "ESC");
+  const bool yesNo = (sub && strstr(sub, "Enter=yes")) || (hint && strstr(hint, "Enter=yes"));
+  // A passkey prompt ("Enter=ok") is digits only: the keyboard opens on numbers.
+  const bool numeric = (sub && strstr(sub, "Enter=ok")) || (hint && strstr(hint, "Enter=ok"));
+  String touchSub;
+  if (sub) {
+    touchSub = sub;
+    const int cut = touchSub.indexOf("   Enter");
+    if (cut >= 0) touchSub.remove(cut);
+    sub = touchSub.c_str();
+  }
+  if (asks && !yesNo) {
+    drawTouchKeyboard(title, touchSub, numeric);
+    return;
+  }
+  touchFrame(0xFF);
+  if (asks || stoppable) hint = nullptr;
+#endif
   canvas_.fillSprite(kBg);
 
   // Box grows to fit whichever line is wider (title @ size 2, sub @ subSize,
@@ -152,6 +383,18 @@ void UI::message(const char* title, const char* sub, uint8_t subSize, const char
     canvas_.print(hint);
   }
   canvas_.setTextSize(1);   // restore default for subsequent draws
+#if defined(CHIMERA_TOUCH_UI)
+  if (asks) {
+    canvas_.fillRect(0, h - kTouchBarH, w, kTouchBarH, kHeader);
+    drawTouchButton(0, "Cancel", touchui::kBackspace, false);
+    drawTouchButton(1, "OK", touchui::kEnter, true);
+  } else if (stoppable) {
+    canvas_.fillRect(0, h - kTouchBarH, w, kTouchBarH, kHeader);
+    drawTouchButton(2, "Stop", '`', false);
+  } else {
+    touchui::addKey(0, 0, w, h, touchui::kBackspace);
+  }
+#endif
   canvas_.pushSprite(&M5Cardputer.Display, 0, 0);
   lastDrawMs_ = millis();
 }
@@ -192,9 +435,21 @@ void UI::drawHeader(const MenuView& menu, int16_t w) {
   canvas_.print(tag);
 
   // Title fills the remaining left space.
+  int16_t titleX = 6;
+#if defined(CHIMERA_TOUCH_UI)
+  // Back button (the keyboard build's left-arrow key) on every screen but the top one.
+  if (menu.screen != MenuScreen::Main) {
+    canvas_.fillRoundRect(3, 2, 22, 16, 4, kPanel);
+    canvas_.setTextColor(kText, kPanel);
+    canvas_.setCursor(11, 6);
+    canvas_.print("<");
+    touchui::addKey(0, 0, 32, 22, ',');
+    titleX = 31;
+  }
+#endif
   canvas_.setTextColor(kText, kHeader);
-  canvas_.setCursor(6, 6);
-  size_t titleChars = maxCharsForWidth(tagX - 12, 1);
+  canvas_.setCursor(titleX, 6);
+  size_t titleChars = maxCharsForWidth(tagX - titleX - 6, 1);
   canvas_.print(trimToWidth(String(menu.title), titleChars));
 }
 
@@ -249,13 +504,10 @@ void UI::drawMenuList(const MenuView& menu, int16_t w, int16_t h) {
   constexpr int rows = 4;
   const int16_t rowH = 22;
   const int16_t startY = 24;
-  const size_t cur = (size_t)max(menu.selectedIndex, 0);
-  const size_t page = cur / rows;
-  const size_t start = page * rows;
-  const size_t end = min(menu.itemCount, start + rows);
+  const ListSpan span = listSpan(menu, menu.itemCount, rows, startY, rowH, h);
 
-  for (size_t i = start; i < end; ++i) {
-    const int16_t y = startY + (int16_t)(i - start) * rowH;
+  for (size_t i = span.start; i < span.end; ++i) {
+    const int16_t y = span.y0 + (int16_t)(i - span.start) * rowH;
     const bool sel = (int)i == menu.selectedIndex;
     canvas_.fillRoundRect(6, y, w - 12, rowH - 4, 5, sel ? kSelect : kPanel);
     canvas_.setTextSize(1);
@@ -276,14 +528,11 @@ void UI::drawDevices(const MenuView& menu, int16_t w, int16_t h) {
   constexpr int rows = 5;
   const int16_t rowH = 19;
   const int16_t startY = 23;
-  const size_t cur = (size_t)max(menu.selectedIndex, 0);
-  const size_t page = cur / rows;
-  const size_t start = page * rows;
-  const size_t end = min(devs.size(), start + rows);
+  const ListSpan span = listSpan(menu, devs.size(), rows, startY, rowH, h);
 
-  for (size_t i = start; i < end; ++i) {
+  for (size_t i = span.start; i < span.end; ++i) {
     const auto& r = devs[i];
-    const int16_t y = startY + (int16_t)(i - start) * rowH;
+    const int16_t y = span.y0 + (int16_t)(i - span.start) * rowH;
     const bool sel = (int)i == menu.selectedIndex;
     canvas_.fillRoundRect(6, y, w - 12, rowH - 3, 4, sel ? kSelect : kPanel);
 
@@ -329,6 +578,7 @@ void UI::drawDeviceDetail(const MenuView& menu, int16_t w, int16_t h) {
     for (size_t i = 0; i < menu.itemCount; ++i) {
       const bool sel = (int)i == menu.selectedIndex;
       canvas_.fillRoundRect(6, y, w - 12, 16, 4, sel ? kSelect : kPanelAlt);
+      TOUCH_ROW(0, y - 1, w, 18, i);
       canvas_.setTextColor(sel ? kSelectTxt : kText, sel ? kSelect : kPanelAlt);
       canvas_.setCursor(12, y + 4);
       canvas_.print(menu.items[i]);
@@ -353,7 +603,11 @@ static String gattUuidShort(const NimBLEUUID& u, const char* (*named)(uint16_t))
 void UI::drawGatt(const MenuView& menu, int16_t w, int16_t h) {
   if (!gatt::hasCache()) {
     // printHint renders CP437 arrow glyphs (UTF8 off) so A_RT shows the -> key.
+#if defined(CHIMERA_TOUCH_UI)
+    printHint(10, 40, connection::isConnected() ? "tap Dump to read this device"
+#else
     printHint(10, 40, connection::isConnected() ? "press " A_RT " to dump this device"
+#endif
                                                 : "not connected - connect first",
               kTextDim, kBg);
     return;
@@ -380,6 +634,7 @@ void UI::drawGatt(const MenuView& menu, int16_t w, int16_t h) {
 
   const int16_t top = 23, bottom = h - 20, lineH = 11;
   const int visible = (bottom - top) / lineH;
+  TOUCH_LINES(top, bottom, lineH);
   const int total = (int)lines.size();
   const int maxStart = max(0, total - visible);
   int start = menu.scrollOffset;
@@ -458,13 +713,12 @@ void UI::drawClone(const MenuView& menu, int16_t w, int16_t h) {
   const int total = actions + nameCount;
 
   const int16_t top = 36, rowH = 15;
-  const int visible = (h - 20 - top) / rowH;
+  const int visible = max(1, (h - 20 - top) / rowH);
   const int sel = menu.selectedIndex;
-  const int page = (visible > 0) ? sel / visible : 0;
-  const int start = page * visible;
+  const ListSpan span = listSpan(menu, (size_t)total, visible, top, rowH, h);
 
-  int16_t y = top;
-  for (int i = start; i < total && i < start + visible; ++i) {
+  int16_t y = span.y0;
+  for (int i = (int)span.start; i < (int)span.end; ++i) {
     const bool isSel = i == sel;
     canvas_.fillRoundRect(6, y, w - 12, rowH - 2, 4, isSel ? kSelect : kPanel);
     canvas_.setTextColor(isSel ? kSelectTxt : kText, isSel ? kSelect : kPanel);
@@ -491,12 +745,9 @@ void UI::drawDumps(const MenuView& menu, int16_t w, int16_t h) {
   }
   constexpr int rows = 5;
   const int16_t rowH = 19, startY = 23;
-  const size_t cur = (size_t)max(menu.selectedIndex, 0);
-  const size_t page = cur / rows;
-  const size_t start = page * rows;
-  const size_t end = min(files->size(), start + rows);
-  for (size_t i = start; i < end; ++i) {
-    const int16_t y = startY + (int16_t)(i - start) * rowH;
+  const ListSpan span = listSpan(menu, files->size(), rows, startY, rowH, h);
+  for (size_t i = span.start; i < span.end; ++i) {
+    const int16_t y = span.y0 + (int16_t)(i - span.start) * rowH;
     const bool sel = (int)i == menu.selectedIndex;
     canvas_.fillRoundRect(6, y, w - 12, rowH - 3, 4, sel ? kSelect : kPanel);
     canvas_.setTextSize(1);
@@ -511,12 +762,9 @@ void UI::drawSettings(const MenuView& menu, int16_t w, int16_t h) {
   if (!items || items->empty()) return;
   constexpr int rows = 5;
   const int16_t rowH = 20, startY = 24;
-  const size_t cur = (size_t)max(menu.selectedIndex, 0);
-  const size_t page = cur / rows;
-  const size_t start = page * rows;
-  const size_t end = min(items->size(), start + rows);
-  for (size_t i = start; i < end; ++i) {
-    const int16_t y = startY + (int16_t)(i - start) * rowH;
+  const ListSpan span = listSpan(menu, items->size(), rows, startY, rowH, h);
+  for (size_t i = span.start; i < span.end; ++i) {
+    const int16_t y = span.y0 + (int16_t)(i - span.start) * rowH;
     const bool sel = (int)i == menu.selectedIndex;
     canvas_.fillRoundRect(6, y, w - 12, rowH - 4, 5, sel ? kSelect : kPanel);
     canvas_.setTextSize(1);
@@ -580,6 +828,7 @@ void UI::drawHoneypot(const MenuView& menu, int16_t w, int16_t h) {
   }
   const int16_t top = 34, bottom = h - 20, lineH = 10;
   const int visible = (bottom - top) / lineH;
+  TOUCH_LINES(top, bottom, lineH);
   const int total = (int)lines->size();
   const int maxStart = max(0, total - visible);
   // scrollOffset counts back from the newest (0 = newest), like Logs.
@@ -611,12 +860,9 @@ void UI::drawSentryList(const MenuView& menu, int16_t w, int16_t h) {
   }
   constexpr int visRows = 5;
   const int16_t rowH = 19, startY = 23;
-  const size_t cur = (size_t)max(menu.selectedIndex, 0);
-  const size_t page = cur / visRows;
-  const size_t start = page * visRows;
-  const size_t end = min(rows->size(), start + visRows);
-  for (size_t i = start; i < end; ++i) {
-    const int16_t y = startY + (int16_t)(i - start) * rowH;
+  const ListSpan span = listSpan(menu, rows->size(), visRows, startY, rowH, h);
+  for (size_t i = span.start; i < span.end; ++i) {
+    const int16_t y = span.y0 + (int16_t)(i - span.start) * rowH;
     const bool sel = (int)i == menu.selectedIndex;
     canvas_.fillRoundRect(6, y, w - 12, rowH - 3, 4, sel ? kSelect : kPanel);
     canvas_.setTextSize(1);
@@ -650,6 +896,7 @@ void UI::drawAlert(const MenuView& menu, int16_t w, int16_t h) {
     const bool sel = i == menu.selectedIndex;
     const int16_t x = 6 + i * (boxW + 3), y = h - 36;
     canvas_.fillRoundRect(x, y, boxW, 14, 4, sel ? kSelect : kPanel);
+    TOUCH_ROW(x - 1, y - 6, boxW + 3, 26, i);
     canvas_.setTextColor(sel ? kSelectTxt : kText, sel ? kSelect : kPanel);
     int16_t tw = (int16_t)strlen(kOpts[i]) * 6;
     canvas_.setCursor(x + (boxW - tw) / 2, y + 4);
@@ -741,6 +988,10 @@ void UI::drawSplash() {
 void UI::drawCharging(int level, bool charging, int16_t mv, int32_t ma) {
   if (!canvasReady_) return;
   const int16_t w = canvas_.width(), h = canvas_.height();
+#if defined(CHIMERA_TOUCH_UI)
+  touchFrame(0xFE);
+  touchui::addKey(0, 0, w, h, touchui::kBackspace);
+#endif
 
   // Pure black, no banners - fewest lit pixels. Gentle slow drift (anti burn-in).
   canvas_.fillSprite(0x0000);
@@ -796,6 +1047,7 @@ void UI::drawDumpView(const MenuView& menu, int16_t w, int16_t h) {
   }
   const int16_t top = 34, bottom = h - 20, lineH = 10;   // 34 leaves room for the filename line
   const int visible = (bottom - top) / lineH;
+  TOUCH_LINES(top, bottom, lineH);
   const int total = (int)lines->size();
   const int maxStart = max(0, total - visible);
   int start = menu.scrollOffset;
@@ -874,6 +1126,7 @@ void UI::drawLogs(const String* logLines, size_t logHead, size_t logCount, int s
   const int16_t bottom = h - 20;
   const int16_t lineH = 10;
   const int maxLines = (bottom - top) / lineH;
+  TOUCH_LINES(top, bottom, lineH);
   if (maxLines <= 0 || logCount == 0) {
     canvas_.setTextColor(kTextDim, kBg);
     canvas_.setCursor(10, 40);
