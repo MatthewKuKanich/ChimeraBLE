@@ -6,7 +6,8 @@
 // feeds raw touch samples; gestures come out as the events the App already
 // understands:
 //
-//   tap on a key target   -> that key press (Enter, Backspace or a character)
+//   tap on a key target   -> that key press (Enter, Backspace or a character);
+//                            on-screen keyboard keys fire on touch-down
 //   tap on a row          -> takeRowTap(): the App selects and opens that row
 //   drag on a list        -> the list scrolls (position kept per screen)
 //   drag on a text area   -> up/down key presses, one per line dragged
@@ -21,13 +22,17 @@ namespace touchui {
 
 constexpr char kEnter = '\n';
 constexpr char kBackspace = '\b';
+constexpr char kCancel = 0x1B;     // the on-screen keyboard's Cancel: end the text entry
+constexpr char kLocalMax = 0x08;   // key codes below this stay in the UI (see takeLocal)
 
 // Start a frame: forget the previous frame's targets. `screen` names the scroll
 // position that list() uses (one remembered position per screen).
 void frameBegin(uint8_t screen);
 
-// A tap inside the rectangle presses `key`.
-void addKey(int16_t x, int16_t y, int16_t w, int16_t h, char key);
+// A tap inside the rectangle presses `key`. With onPress the key fires as the
+// finger lands instead of when it lifts (typing). A key code below kLocalMax is
+// not sent to the App; the renderer collects it with takeLocal().
+void addKey(int16_t x, int16_t y, int16_t w, int16_t h, char key, bool onPress = false);
 
 // A tap inside the rectangle opens row `row`.
 void addRow(int16_t x, int16_t y, int16_t w, int16_t h, int row);
@@ -43,6 +48,9 @@ void lines(int16_t top, int16_t bottom, int16_t lineH);
 
 // True once per tapped row.
 bool takeRowTap(int& row);
+
+// The last UI-local key pressed (shift, page switch), or 0.
+char takeLocal();
 
 // Board layer: one touch sample per poll (down = finger on the glass).
 void feed(bool down, int16_t x, int16_t y);

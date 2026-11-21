@@ -100,6 +100,9 @@ class UI {
   // One on-screen button in the bottom bar; slot 0 = left half, 1 = right half,
   // 2 = full width. A tap presses `key`.
   void drawTouchButton(int slot, const char* label, char key, bool primary);
+  // Full-screen text entry: the prompt, what has been typed, and an on-screen
+  // keyboard. Stands in for the keyboard build's typed prompts and CMD> line.
+  void drawTouchKeyboard(const char* title, const String& text, bool numeric);
 #endif
 
   void drawHeader(const MenuView& menu, int16_t w);

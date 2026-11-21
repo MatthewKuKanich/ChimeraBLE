@@ -13,8 +13,9 @@ struct Target {
   int16_t x, y, w, h;
   char key;      // key press, when row < 0
   int16_t row;   // row to open, when >= 0
+  bool onPress;  // fire on touch-down
 };
-constexpr size_t kMaxTargets = 24;
+constexpr size_t kMaxTargets = 48;   // the on-screen keyboard is 32 keys
 Target g_targets[kMaxTargets];
 size_t g_targetCount = 0;
 
@@ -37,12 +38,13 @@ constexpr size_t kKeyQueue = 16;
 char g_keys[kKeyQueue];
 size_t g_keyHead = 0, g_keyCount = 0;
 int g_rowTap = -1;
+char g_local = 0;
 
 // Gesture state. A touch is a tap until it moves kDragStart px vertically inside
 // a scrollable area; from then on it scrolls and never taps.
 enum class Area : uint8_t { None, List, Lines };
 constexpr int16_t kDragStart = 5;
-bool g_down = false, g_drag = false;
+bool g_down = false, g_drag = false, g_consumed = false;
 Area g_area = Area::None;
 int16_t g_x0 = 0, g_y0 = 0, g_lastY = 0, g_lineAcc = 0;
 
@@ -52,18 +54,30 @@ void pushKey(char k) {
   ++g_keyCount;
 }
 
-void addTarget(int16_t x, int16_t y, int16_t w, int16_t h, char key, int16_t row) {
+void addTarget(int16_t x, int16_t y, int16_t w, int16_t h, char key, int16_t row,
+               bool onPress) {
   if (g_targetCount == kMaxTargets) return;
-  g_targets[g_targetCount++] = {x, y, w, h, key, row};
+  g_targets[g_targetCount++] = {x, y, w, h, key, row, onPress};
+}
+
+// The target under a point; later targets are drawn on top, so they win.
+const Target* targetAt(int16_t x, int16_t y) {
+  for (size_t i = g_targetCount; i-- > 0;) {
+    const Target& t = g_targets[i];
+    if (x >= t.x && y >= t.y && x < t.x + t.w && y < t.y + t.h) return &t;
+  }
+  return nullptr;
+}
+
+void fire(const Target& t) {
+  if (t.row >= 0) g_rowTap = t.row;
+  else if (t.key > 0 && t.key < kLocalMax) g_local = t.key;
+  else pushKey(t.key);
 }
 
 void tap(int16_t x, int16_t y) {
-  // Later targets are drawn on top, so they win.
-  for (size_t i = g_targetCount; i-- > 0;) {
-    const Target& t = g_targets[i];
-    if (x < t.x || y < t.y || x >= t.x + t.w || y >= t.y + t.h) continue;
-    if (t.row >= 0) g_rowTap = t.row;
-    else pushKey(t.key);
+  if (const Target* t = targetAt(x, y)) {
+    fire(*t);
     return;
   }
   if (g_list.active && y >= g_list.top && y < g_list.bottom) {
@@ -81,12 +95,12 @@ void frameBegin(uint8_t screen) {
   g_screen = screen % kScreens;
 }
 
-void addKey(int16_t x, int16_t y, int16_t w, int16_t h, char key) {
-  addTarget(x, y, w, h, key, -1);
+void addKey(int16_t x, int16_t y, int16_t w, int16_t h, char key, bool onPress) {
+  addTarget(x, y, w, h, key, -1, onPress);
 }
 
 void addRow(int16_t x, int16_t y, int16_t w, int16_t h, int row) {
-  addTarget(x, y, w, h, 0, (int16_t)row);
+  addTarget(x, y, w, h, 0, (int16_t)row, false);
 }
 
 int16_t list(int16_t top, int16_t bottom, int16_t rowH, size_t count) {
@@ -118,6 +132,12 @@ bool takeRowTap(int& row) {
   return true;
 }
 
+char takeLocal() {
+  const char k = g_local;
+  g_local = 0;
+  return k;
+}
+
 char takeKey() {
   if (g_keyCount == 0) return 0;
   const char k = g_keys[g_keyHead];
@@ -133,6 +153,14 @@ void feed(bool down, int16_t x, int16_t y) {
     g_x0 = x;
     g_y0 = g_lastY = y;
     g_lineAcc = 0;
+    // A keyboard key fires now; the rest of this touch does nothing more.
+    const Target* t = targetAt(x, y);
+    g_consumed = t && t->onPress;
+    if (g_consumed) {
+      fire(*t);
+      g_area = Area::None;
+      return;
+    }
     if (g_list.active && y >= g_list.top && y < g_list.bottom) g_area = Area::List;
     else if (g_lines.active && y >= g_lines.top && y < g_lines.bottom) g_area = Area::Lines;
     else g_area = Area::None;
@@ -159,7 +187,7 @@ void feed(bool down, int16_t x, int16_t y) {
   }
   if (g_down) {
     g_down = false;
-    if (!g_drag) tap(g_x0, g_y0);
+    if (!g_drag && !g_consumed) tap(g_x0, g_y0);
   }
 }
 

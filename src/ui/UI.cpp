@@ -55,10 +55,28 @@ constexpr const char* kAboutVersion = "v1.0.1";
 #if defined(CHIMERA_TOUCH_UI)
 constexpr int16_t kTouchBarH = 24;   // bottom button bar
 
+// On-screen keyboard state. The shift and page keys are handled by the renderer
+// and never reach the App.
+constexpr char kKeyPage = 1, kKeyShift = 2;
+bool g_kbShown = false;     // the frame on screen is the keyboard
+bool g_kbSymbols = false;   // digits/punctuation page
+bool g_kbCaps = false;
+String g_kbSig;             // what the keyboard frame on screen shows
+
+// Start any frame that is not the keyboard.
+void touchFrame(uint8_t id) {
+  g_kbShown = false;
+  touchui::frameBegin(id);
+}
+
 // The one action a screen offers beyond tapping its rows (the keyboard build
 // shows these as footer key hints). Returns false when there is none.
 bool touchAction(const MenuView& menu, const char*& label, char& key) {
   switch (menu.screen) {
+    case MenuScreen::Main:
+      label = "Command line";
+      key = '\'';
+      return true;
     case MenuScreen::Gatt:
       label = gatt::hasCache() ? "Clone" : "Dump";
       key = '/';
@@ -116,7 +134,11 @@ void UI::draw(const MenuView& menu, const String& inputBuffer,
   // No key-hint footer on a touch screen: a screen with an action gets a button
   // bar, the rest use the full height. hc is the height handed to the screen
   // code, chosen so its "h - 18" footer arithmetic ends at the bar (or the edge).
-  touchui::frameBegin((uint8_t)menu.screen);
+  if (menu.commandMode) {
+    drawTouchKeyboard("Command", inputBuffer + "_", false);
+    return;
+  }
+  touchFrame((uint8_t)menu.screen);
   const char* barLabel = nullptr;
   char barKey = 0;
   const bool hasBar = touchAction(menu, barLabel, barKey);
@@ -157,7 +179,6 @@ void UI::draw(const MenuView& menu, const String& inputBuffer,
   }
 
 #if defined(CHIMERA_TOUCH_UI)
-  (void)inputBuffer;
   canvas_.clearClipRect();
   if (hasBar) {
     canvas_.fillRect(0, h - kTouchBarH, w, kTouchBarH, kHeader);
@@ -185,6 +206,83 @@ void UI::drawTouchButton(int slot, const char* label, char key, bool primary) {
   const int16_t tx = (slot == 1) ? (w / 2) : 0;
   const int16_t tw = (slot == 2) ? w : (w / 2);
   touchui::addKey(tx, h - kTouchBarH, tw, kTouchBarH, key);
+}
+#endif
+
+#if defined(CHIMERA_TOUCH_UI)
+void UI::drawTouchKeyboard(const char* title, const String& text, bool numeric) {
+  if (!canvasReady_) return;
+  if (!g_kbShown) { g_kbSymbols = numeric; g_kbCaps = false; }
+  const char local = touchui::takeLocal();
+  if (local == kKeyPage) g_kbSymbols = !g_kbSymbols;
+  else if (local == kKeyShift) g_kbCaps = !g_kbCaps;
+
+  // Prompts are redrawn every loop: skip the work (and keep the frame's key
+  // targets) while nothing on it has changed.
+  const String sig = String(title) + "\n" + text + (g_kbSymbols ? "S" : "L") + (g_kbCaps ? "C" : "c");
+  if (g_kbShown && sig == g_kbSig) return;
+  g_kbSig = sig;
+  touchui::frameBegin(0xFD);
+  g_kbShown = true;
+
+  const int16_t w = canvas_.width();
+  canvas_.fillSprite(kBg);
+  canvas_.fillRect(0, 0, w, 20, kHeader);
+  canvas_.setTextSize(1);
+  canvas_.setTextColor(kText, kHeader);
+  canvas_.setCursor(6, 6);
+  canvas_.print(trimToWidth(String(title), maxCharsForWidth(w - 12, 1)));
+
+  // What has been typed, large; its tail stays in view when it outgrows the box.
+  canvas_.fillRoundRect(4, 24, w - 8, 26, 4, kPanel);
+  const size_t maxChars = maxCharsForWidth(w - 20, 2);
+  const String shown = text.length() > maxChars ? text.substring(text.length() - maxChars) : text;
+  canvas_.setTextSize(2);
+  canvas_.setTextColor(kText, kPanel);
+  canvas_.setCursor(10, 29);
+  canvas_.print(shown);
+
+  // Ten 24-px keys across; the second row is inset half a key, the third sits
+  // between Shift and Backspace.
+  static const char* const kLetters[3] = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
+  static const char* const kSymbols[3] = {"1234567890", "-_:./=+*#", "()!?@',"};
+  const char* const* rows = g_kbSymbols ? kSymbols : kLetters;
+  const int16_t top = 56, rowH = 26, keyW = 24;
+
+  auto key = [&](int16_t x, int16_t y, int16_t kw, const char* label, char code,
+                 uint16_t fill, uint8_t size) {
+    canvas_.fillRoundRect(x + 1, y + 1, kw - 2, rowH - 2, 3, fill);
+    canvas_.setTextSize(size);
+    canvas_.setTextColor(fill == kSelect ? kSelectTxt : kText, fill);
+    const int16_t tw = (int16_t)strlen(label) * 6 * size;
+    canvas_.setCursor(x + (kw - tw) / 2, y + (rowH - 8 * size) / 2);
+    canvas_.print(label);
+    touchui::addKey(x, y, kw, rowH, code, true);
+  };
+
+  static const int16_t kRowX[3] = {0, 12, 36};
+  for (int r = 0; r < 3; ++r) {
+    int16_t x = kRowX[r];
+    const int16_t y = top + r * rowH;
+    for (const char* p = rows[r]; *p; ++p) {
+      char c = *p;
+      if (!g_kbSymbols && g_kbCaps) c = (char)toupper((unsigned char)c);
+      const char label[2] = {c, 0};
+      key(x, y, keyW, label, c, kPanelAlt, 2);
+      x += keyW;
+    }
+  }
+  const int16_t y3 = top + 2 * rowH, y4 = top + 3 * rowH;
+  if (!g_kbSymbols) key(0, y3, 36, "shift", kKeyShift, g_kbCaps ? kSelect : kPanel, 1);
+  key(204, y3, 36, "<-", touchui::kBackspace, kPanel, 1);
+  key(0, y4, 36, g_kbSymbols ? "abc" : "123", kKeyPage, kPanel, 1);
+  key(36, y4, 96, "space", ' ', kPanelAlt, 1);
+  key(132, y4, 54, "Cancel", touchui::kCancel, kPanel, 1);
+  key(186, y4, 54, "OK", touchui::kEnter, kSelect, 1);
+
+  canvas_.setTextSize(1);
+  canvas_.pushSprite(&M5Cardputer.Display, 0, 0);
+  lastDrawMs_ = millis();
 }
 #endif
 
@@ -220,10 +318,13 @@ void UI::message(const char* title, const char* sub, uint8_t subSize, const char
   // The App words its prompts for a keyboard ("...   Enter=yes  any=no", hint
   // "ESC = stop"). On a touch screen those become buttons: a prompt that names
   // Enter gets Cancel / OK, a wait that names ESC gets Stop, and anything else
-  // is dismissed by a tap anywhere.
-  touchui::frameBegin(0xFF);
+  // is dismissed by a tap anywhere. A prompt whose Enter is not a yes/no
+  // ("Enter=save", "Enter=ok") is text entry and gets the on-screen keyboard.
   const bool asks = (sub && strstr(sub, "Enter")) || (hint && strstr(hint, "Enter"));
   const bool stoppable = !asks && hint && strstr(hint, "ESC");
+  const bool yesNo = (sub && strstr(sub, "Enter=yes")) || (hint && strstr(hint, "Enter=yes"));
+  // A passkey prompt ("Enter=ok") is digits only: the keyboard opens on numbers.
+  const bool numeric = (sub && strstr(sub, "Enter=ok")) || (hint && strstr(hint, "Enter=ok"));
   String touchSub;
   if (sub) {
     touchSub = sub;
@@ -231,6 +332,11 @@ void UI::message(const char* title, const char* sub, uint8_t subSize, const char
     if (cut >= 0) touchSub.remove(cut);
     sub = touchSub.c_str();
   }
+  if (asks && !yesNo) {
+    drawTouchKeyboard(title, touchSub, numeric);
+    return;
+  }
+  touchFrame(0xFF);
   if (asks || stoppable) hint = nullptr;
 #endif
   canvas_.fillSprite(kBg);
@@ -879,7 +985,7 @@ void UI::drawCharging(int level, bool charging, int16_t mv, int32_t ma) {
   if (!canvasReady_) return;
   const int16_t w = canvas_.width(), h = canvas_.height();
 #if defined(CHIMERA_TOUCH_UI)
-  touchui::frameBegin(0xFE);
+  touchFrame(0xFE);
   touchui::addKey(0, 0, w, h, touchui::kBackspace);
 #endif
 

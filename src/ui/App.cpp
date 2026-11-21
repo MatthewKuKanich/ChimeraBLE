@@ -406,6 +406,20 @@ void App::handleKeyboard() {
   }
   Keyboard_Class::KeysState keys = M5Cardputer.Keyboard.keysState();
 
+#if defined(CHIMERA_TOUCH_UI)
+  // The on-screen keyboard's Cancel key ends whichever text entry is open (the
+  // keyboard build does this with Backspace on an empty line).
+  for (char c : keys.word) {
+    if (c != touchui::kCancel) continue;
+    if (passkeyMode_) { connection::disconnect(); passkeyBuf_ = ""; passkeyMode_ = false; }
+    sentryEntry_ = false;
+    cloneNameEntry_ = false;
+    commandMode_ = false;
+    inputBuffer_.clear();
+    return;
+  }
+#endif
+
   // Passkey-entry modal: type the digits shown on the peer. Enter injects,
   // backspace edits (or cancels+disconnects when empty).
   if (passkeyMode_) {
